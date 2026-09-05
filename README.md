@@ -5,7 +5,7 @@ Independently position and resize general chat and kill feed:
 - Set corner anchor
 - Set X Y offset (counted from the anchor inwards)
 - Set scale of panel
-- Set width - this sets a fixed width the panel will be at all times, set this to 0 for auto width (width will resizes based on longest message)
+- Set width - this sets a fixed width the panel will be at all times, set this to 0 for auto width (width will resize based on longest message)
 - Set max width (when width is in auto mode, this is the max width it'll allow the panel to become)
 
 When combining kill feed into general messages (so it's like vanilla), you can still move/resize that panel with the general chat settings (kill feed's other settings are ignored).
