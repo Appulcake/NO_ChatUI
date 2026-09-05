@@ -17,7 +17,7 @@ When mouse overing a panel, you can scroll the history with either `Zoom View` o
 History size allows you to set how many lines max the histories save.
 When kill feed is combined into general chat, they have a combined chronological history of both their elements.
 
-<img width="1280" alt="NuclearOption_963kIsr3UC" src="https://github.com/user-attachments/assets/c77a91ea-dc7f-4c67-9852-7491dc452e66" />
+
 
 https://github.com/user-attachments/assets/5fbbe4f9-3832-4a1b-9333-bae578a49acd
 
