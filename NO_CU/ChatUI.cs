@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using NuclearOption.MissionEditorScripts;
 using Rewired;
 using TMPro;
 using UnityEngine;
@@ -38,7 +39,12 @@ internal static class ChatUI
     private static readonly List<HistoryEntry> HistoryRecord = [];
     private static readonly StringBuilder Builder = new();
     
+    private static bool _holdPanelsHidden;
+    private static bool _aircraftSelectionOpen;
     private static FeedType GeneralChatHistoryType => _combinedPanels ? FeedType.Combined : FeedType.General;
+    
+    private static bool HasVisibilityHotkeyTarget() => Plugin.GeneralChat.ToggleWithChatHold.Value ||
+                                                       (!_combinedPanels && Plugin.KillFeed.ToggleWithChatHold.Value);
     
     internal static void Setup(MessageUI ui)
     {
@@ -130,6 +136,8 @@ internal static class ChatUI
         _historyEnabled = Plugin.HistoryEnabled.Value;
         _heldScrollDirection = 0;
         _nextScrollRepeat = 0f;
+        _holdPanelsHidden = false;
+        _aircraftSelectionOpen = false;
         _setup = true;
         _killFeed.Root.gameObject.SetActive(false);
         
@@ -151,6 +159,8 @@ internal static class ChatUI
         _chatOpen = false;
         _combinedPanels = false;
         _historyEnabled = false;
+        _holdPanelsHidden = false;
+        _aircraftSelectionOpen = false;
         _ui = null!;
         _generalChat = null!;
         _killFeed = null!;
@@ -165,6 +175,7 @@ internal static class ChatUI
     {
         if (!_setup || _ui != ui)
             return;
+        CheckVisibilityHotkey();
         UpdateHistoryInteraction();
         RefreshPanelVisibility();
         RefreshChangedWidths();
@@ -364,11 +375,21 @@ internal static class ChatUI
             return;
         }
         
+        var generalSuppressed = IsPanelSuppressed(_generalChat) && !_chatOpen;
+        var killFeedSuppressed = IsPanelSuppressed(_killFeed);
+        
+        if (generalSuppressed)
+            HideHistory(_generalChat);
+        
+        if (killFeedSuppressed)
+            HideHistory(_killFeed);
+        
         var cursorVisible = CursorManager.Visible;
         var generalChatType = GeneralChatHistoryType;
-        var hoverGeneralChat = cursorVisible && HasEntries(generalChatType) && ContainsPointer(_generalChat.Root);
-        var hoverKillFeed = !_combinedPanels && !_chatOpen && cursorVisible && HasEntries(FeedType.KillFeed) &&
-                            ContainsPointer(_killFeed.Root);
+        var hoverGeneralChat = !generalSuppressed && cursorVisible && HasEntries(generalChatType) &&
+                               ContainsPointer(_generalChat.Root);
+        var hoverKillFeed = !_combinedPanels && !_chatOpen && !killFeedSuppressed && cursorVisible &&
+                            HasEntries(FeedType.KillFeed) && ContainsPointer(_killFeed.Root);
         
         if (!_chatOpen && hoverGeneralChat && hoverKillFeed)
         {
@@ -678,10 +699,18 @@ internal static class ChatUI
     private static void RefreshPanelVisibility()
     {
         var cinematic = PlayerSettings.cinematicMode;
-        var generalChatVisible = !cinematic && (_ui.chat.gameObject.activeSelf || !_ui.messageFeed.NoText ||
-                                                (_combinedPanels && !_ui.killFeed.NoText) ||
-                                                _generalChat.HistoryActive);
-        var killFeedVisible = !_combinedPanels && !cinematic && (!_ui.killFeed.NoText || _killFeed.HistoryActive);
+        var chatOpen = _ui.chat.gameObject.activeSelf;
+        var generalChatVisible =
+            !cinematic &&
+            (
+                chatOpen || (!IsPanelSuppressed(_generalChat) && (!_ui.messageFeed.NoText ||
+                                                                  (_combinedPanels && !_ui.killFeed.NoText) ||
+                                                                  _generalChat.HistoryActive))
+            );
+        
+        var killFeedVisible = !_combinedPanels && !cinematic && !IsPanelSuppressed(_killFeed) &&
+                              (!_ui.killFeed.NoText || _killFeed.HistoryActive);
+        
         SetPanelVisible(_generalChat, generalChatVisible);
         SetPanelVisible(_killFeed, killFeedVisible);
     }
@@ -956,6 +985,80 @@ internal static class ChatUI
         destination.material = source.material;
     }
     
+    internal static void AircraftSelectionChanged(bool open)
+    {
+        if (!_setup)
+            return;
+        
+        _aircraftSelectionOpen = open;
+        
+        if (open)
+        {
+            if (_generalChat.Config.HideInAircraftSelection.Value)
+                HideHistory(_generalChat);
+            
+            if (!_combinedPanels && _killFeed.Config.HideInAircraftSelection.Value)
+                HideHistory(_killFeed);
+        }
+        
+        RefreshPanelVisibility();
+    }
+    
+    internal static bool CheckOpenChat()
+    {
+        if (!_setup || _player == null)
+            return false;
+        
+        if (!ChatBox.ChatAllowed || PlayerSettings.cinematicMode || InputFieldChecker.InsideInputField)
+            return true;
+        
+        if (!HasVisibilityHotkeyTarget())
+        {
+            if (_player.GetButtonDown("Open Chat"))
+                _ui.chat.gameObject.SetActive(true);
+            
+            return true;
+        }
+        
+        if (_player.GetButtonTimedPressUp("Open Chat", 0f, PlayerSettings.pressDelay))
+            _ui.chat.gameObject.SetActive(true);
+        
+        return true;
+    }
+    
+    private static void CheckVisibilityHotkey()
+    {
+        if (_player == null || PlayerSettings.cinematicMode || InputFieldChecker.InsideInputField || !HasVisibilityHotkeyTarget())
+            return;
+        
+        if (!_player.GetButtonTimedPressDown("Open Chat", PlayerSettings.pressDelay))
+            return;
+        
+        _holdPanelsHidden = !_holdPanelsHidden;
+        
+        if (_holdPanelsHidden)
+        {
+            if (Plugin.GeneralChat.ToggleWithChatHold.Value)
+                HideHistory(_generalChat);
+            
+            if (!_combinedPanels && Plugin.KillFeed.ToggleWithChatHold.Value)
+                HideHistory(_killFeed);
+        }
+        
+        RefreshPanelVisibility();
+    }
+    
+    private static bool IsPanelSuppressed(Panel panel)
+    {
+        if (_aircraftSelectionOpen && panel.Config.HideInAircraftSelection.Value)
+            return true;
+        
+        if (_holdPanelsHidden && panel.Config.ToggleWithChatHold.Value)
+            return true;
+        
+        return false;
+    }
+    
     private static string GetPath(Transform transform)
     {
         var path = transform.name;
@@ -964,6 +1067,12 @@ internal static class ChatUI
             path = parent.name + "/" + path;
         
         return path;
+    }
+    
+    internal static void RefreshVisibility()
+    {
+        if (_setup)
+            RefreshPanelVisibility();
     }
     
     [Flags]

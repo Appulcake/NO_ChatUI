@@ -34,7 +34,7 @@ public class Plugin : BaseUnityPlugin
         KillFeed = new PanelConfig(Config, "Kill Feed", "kill feed", ScreenCorner.TopRight, defaultOffsetY: 150f);
         CombineKillFeedWithGeneral = Config.Bind("Kill Feed", "Combine With General Messages", false,
             "Put Kill Feed back inside the General Messages panel.\n" +
-            "When enabled, Kill Feed corner/offset/scale/width settings are ignored.");
+            "When enabled, Kill Feed specific position/sizing/visibility settings are ignored.");
         
         GeneralMessageBaseDuration = Config.Bind("Message Timing", "General Base Duration", 8f,
             new ConfigDescription("Base duration of general messages in seconds.",
@@ -61,6 +61,8 @@ public class Plugin : BaseUnityPlugin
         WatchSettingChanges(DurationPerCharacter, ChatUI.ApplyMessageDurations);
         WatchSettingChanges(HistoryEnabled, ChatUI.ApplyHistoryConfig);
         WatchSettingChanges(HistorySize, ChatUI.ApplyHistoryConfig);
+        GeneralChat.OnVisibilityChanged(ChatUI.RefreshVisibility);
+        KillFeed.OnVisibilityChanged(ChatUI.RefreshVisibility);
         
         Harmony = new Harmony(MyPluginInfo.PLUGIN_GUID);
         Repatch();
@@ -96,10 +98,12 @@ public class Plugin : BaseUnityPlugin
     internal class PanelConfig
     {
         internal readonly ConfigEntry<ScreenCorner> Corner;
+        internal readonly ConfigEntry<bool> HideInAircraftSelection;
         internal readonly ConfigEntry<float> MaxWidth;
         internal readonly ConfigEntry<float> OffsetX;
         internal readonly ConfigEntry<float> OffsetY;
         internal readonly ConfigEntry<float> Scale;
+        internal readonly ConfigEntry<bool> ToggleWithChatHold;
         internal readonly ConfigEntry<float> Width;
         
         internal PanelConfig(ConfigFile config, string section, string descriptionName, ScreenCorner defaultCorner,
@@ -122,6 +126,10 @@ public class Plugin : BaseUnityPlugin
                 new ConfigDescription(
                     "Maximum width used only while Width is 0 (auto). Setting this Max Width to 0 means no limit on auto width.",
                     new AcceptableValueRange<float>(0f, 8000f)));
+            HideInAircraftSelection = config.Bind(section, "Hide In Aircraft Selection", false,
+                $"Hide the {descriptionName} panel while aircraft selection/loadout menu is open.");
+            ToggleWithChatHold = config.Bind(section, "Toggle With Chat Hold", false,
+                $"Long pressing the Open Chat keybind toggles the {descriptionName} panel's visibility.");
         }
         
         internal void OnChanged(Action action)
@@ -132,6 +140,12 @@ public class Plugin : BaseUnityPlugin
             WatchSettingChanges(Scale, action);
             WatchSettingChanges(Width, action);
             WatchSettingChanges(MaxWidth, action);
+        }
+        
+        internal void OnVisibilityChanged(Action action)
+        {
+            WatchSettingChanges(HideInAircraftSelection, action);
+            WatchSettingChanges(ToggleWithChatHold, action);
         }
     }
 }
@@ -207,5 +221,26 @@ internal static class HarmonyPatches
     private static void SetDynamicBoxSizePostfix()
     {
         ChatUI.ForcePanelSize();
+    }
+    
+    [HarmonyPatch(typeof(AircraftSelectionMenu), nameof(AircraftSelectionMenu.OnEnable))]
+    [HarmonyPostfix]
+    private static void AircraftSelectionMenuOnEnablePostfix()
+    {
+        ChatUI.AircraftSelectionChanged(true);
+    }
+    
+    [HarmonyPatch(typeof(AircraftSelectionMenu), nameof(AircraftSelectionMenu.OnDestroy))]
+    [HarmonyPostfix]
+    private static void AircraftSelectionMenuOnDestroyPostfix()
+    {
+        ChatUI.AircraftSelectionChanged(false);
+    }
+    
+    [HarmonyPatch(typeof(MessageUI), nameof(MessageUI.CheckChatBox))]
+    [HarmonyPrefix]
+    private static bool MessageUICheckChatBoxPrefix()
+    {
+        return !ChatUI.CheckOpenChat();
     }
 }
