@@ -779,11 +779,19 @@ internal static class ChatUI
         if (width <= 1f)
             width = panel.FallbackWidth;
         
-        if (Mathf.Abs(panel.Root.rect.width - width) > 0.1f)
+        var widthChanged = Mathf.Abs(panel.Root.rect.width - width) > 0.1f;
+        
+        if (widthChanged)
+        {
             panel.Root.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(panel.Root);
+        }
+        else
+        {
+            MarkLayout(panel);
+        }
         
         panel.WidthChanged = false;
-        MarkLayout(panel);
     }
     
     private static float CalculatePreferredWidth(Panel panel)
