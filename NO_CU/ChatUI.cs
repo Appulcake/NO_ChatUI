@@ -14,6 +14,8 @@ internal static class ChatUI
 {
     private const float FallbackPanelWidth = 600f;
     private const float HistoryLeaveDelay = 1.5f;
+    private const float HistoryScrollResetDelay = 15f;
+    private const int MouseWheelLinesPerNotch = 3;
     private const float ScrollDeadzone = 0.1f;
     private const float ScrollRepeatDelay = 0.35f;
     private const float ScrollRepeatRate = 0.08f;
@@ -114,6 +116,8 @@ internal static class ChatUI
         killFeedSizeFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
         killFeedSizeFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         
+        var generalSizeFitter = generalChatRoot.GetComponent<ContentSizeFitter>();
+        
         killFeedTextRect.SetParent(killFeedRoot, false);
         killFeedTextRect.localRotation = Quaternion.identity;
         killFeedTextRect.localScale = Vector3.one;
@@ -125,7 +129,7 @@ internal static class ChatUI
         var killHistoryText = CreateHistoryText(ui.killFeedText, killFeedRoot, "NOChatUI_KillFeedHistory");
         
         _generalChat = new Panel(Plugin.GeneralChat, generalChatRoot, ui.messageText, generalHistoryText,
-            ui.messageFeed, ui.contentSizeFitter, generalChatRoot.GetComponent<HorizontalOrVerticalLayoutGroup>(),
+            ui.messageFeed, generalSizeFitter, generalChatRoot.GetComponent<HorizontalOrVerticalLayoutGroup>(),
             generalChatFallbackWidth, capacity);
         _killFeed = new Panel(Plugin.KillFeed, killFeedRoot, ui.killFeedText, killHistoryText, ui.killFeed,
             killFeedSizeFitter, killFeedLayout, killFeedFallbackWidth, capacity);
@@ -276,23 +280,6 @@ internal static class ChatUI
             EnterHistory(_generalChat, GeneralChatHistoryType);
     }
     
-    // AircraftSelectionMenu changes MessageUI's width, force resize it otherwise canvas parent defaults to 0
-    // (which'd show one character per line)
-    internal static void ForcePanelSize()
-    {
-        if (!_setup)
-            return;
-        
-        ApplyPanelWidth(_generalChat);
-        
-        if (!_combinedPanels)
-            ApplyPanelWidth(_killFeed);
-        
-        MarkLayout(_generalChat);
-        if (!_combinedPanels)
-            MarkLayout(_killFeed);
-    }
-    
     // Record a split line when it enters either vanilla MessageFeed
     internal static void Record(MessageFeed feed, string text)
     {
@@ -418,9 +405,9 @@ internal static class ChatUI
             return;
         }
         
-        var direction = ReadScrollDirection();
-        if (direction != 0)
-            ScrollHistory(scrollTarget, direction);
+        var steps = ReadScrollSteps();
+        if (steps != 0)
+            ScrollHistory(scrollTarget, steps);
     }
     
     private static void UpdateHistoryView(Panel panel, FeedType feedType, bool interacting)
@@ -429,6 +416,14 @@ internal static class ChatUI
         {
             HideHistory(panel);
             return;
+        }
+        
+        if (panel is { HistoryActive: true, ScrollToLatest: false } &&
+            Time.unscaledTime - panel.LastScrollTime >= HistoryScrollResetDelay)
+        {
+            panel.ScrollToLatest = true;
+            panel.EndSequence = 0;
+            RenderHistory(panel);
         }
         
         if (interacting)
@@ -465,6 +460,7 @@ internal static class ChatUI
         panel.EndSequence = 0;
         panel.RenderedVersion = -1;
         panel.LastOpenedTime = Time.unscaledTime;
+        panel.LastScrollTime = Time.unscaledTime;
         SetLiveTextActive(feedType, false);
         panel.HistoryText.gameObject.SetActive(true);
         RenderHistory(panel);
@@ -482,6 +478,7 @@ internal static class ChatUI
         panel.ActiveHistoryType = default;
         panel.ScrollToLatest = true;
         panel.EndSequence = 0;
+        panel.LastScrollTime = 0f;
         panel.RenderedVersion = -1;
         panel.WidthChanged = true;
         MarkLayout(panel);
@@ -507,17 +504,36 @@ internal static class ChatUI
     
     // Reuse Zoom View and Field of View rewired binds
     // Put in some time gating so that a binary button down doesn't scroll it way too fast every frame
-    private static int ReadScrollDirection()
+    // When typing in chat, allow mouse scroll wheel (hardcoded) to still scroll, since Rewired inputs are stopped here
+    private static int ReadScrollSteps()
     {
+        if (_chatOpen)
+        {
+            var wheel = Input.mouseScrollDelta.y;
+            if (Mathf.Abs(wheel) >= 0.01f)
+            {
+                ResetScrollRepeat();
+                var steps = Mathf.Clamp(Mathf.RoundToInt(Mathf.Abs(wheel) * MouseWheelLinesPerNotch), 1, 12);
+                return wheel > 0f ? steps : -steps;
+            }
+        }
+        
         if (_player == null)
             return 0;
         
         var axis = Mathf.Clamp(_player.GetAxis("Zoom View") + _player.GetAxis("FOV"), -1f, 1f);
-        
         if (Mathf.Abs(axis) < ScrollDeadzone)
         {
             ResetScrollRepeat();
             return 0;
+        }
+        
+        var wheelDelta = Input.mouseScrollDelta.y;
+        if (Mathf.Abs(wheelDelta) >= 0.01f)
+        {
+            ResetScrollRepeat();
+            var steps = Mathf.Clamp(Mathf.RoundToInt(Mathf.Abs(wheelDelta) * MouseWheelLinesPerNotch), 1, 12);
+            return axis > 0f ? steps : -steps;
         }
         
         var direction = axis > 0f ? 1 : -1;
@@ -543,16 +559,17 @@ internal static class ChatUI
         _nextScrollRepeat = 0f;
     }
     
-    private static void ScrollHistory(Panel panel, int direction)
+    private static void ScrollHistory(Panel panel, int steps)
     {
         BuildHistory(panel.ActiveHistoryType);
         if (HistoryRecord.Count == 0)
             return;
         
+        panel.LastScrollTime = Time.unscaledTime;
         var window = GetHistoryWindowSize();
         var minimumEnd = Mathf.Min(HistoryRecord.Count - 1, window - 1);
         var end = panel.ScrollToLatest ? HistoryRecord.Count - 1 : FindEndIndex(panel.EndSequence);
-        end -= direction;
+        end -= steps;
         end = Mathf.Clamp(end, minimumEnd, HistoryRecord.Count - 1);
         panel.ScrollToLatest = end == HistoryRecord.Count - 1;
         panel.EndSequence = HistoryRecord[end].Sequence;
@@ -798,6 +815,9 @@ internal static class ChatUI
         {
             width = CalculatePreferredWidth(panel);
             
+            if (_chatOpen && ReferenceEquals(panel, _generalChat))
+                width = Mathf.Max(width, panel.FallbackWidth);
+            
             if (width <= 1f)
                 width = panel.Root.rect.width > 1f ? panel.Root.rect.width : panel.FallbackWidth;
             
@@ -1028,7 +1048,8 @@ internal static class ChatUI
     
     private static void CheckVisibilityHotkey()
     {
-        if (_player == null || PlayerSettings.cinematicMode || InputFieldChecker.InsideInputField || !HasVisibilityHotkeyTarget())
+        if (_player == null || PlayerSettings.cinematicMode || InputFieldChecker.InsideInputField ||
+            !HasVisibilityHotkeyTarget())
             return;
         
         if (!_player.GetButtonTimedPressDown("Open Chat", PlayerSettings.pressDelay))
@@ -1168,6 +1189,7 @@ internal static class ChatUI
         internal long EndSequence;
         internal bool HistoryActive;
         internal float LastOpenedTime;
+        internal float LastScrollTime;
         internal long RenderedVersion = -1;
         internal bool ScrollToLatest = true;
         internal bool WidthChanged;

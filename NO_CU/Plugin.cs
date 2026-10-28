@@ -209,20 +209,6 @@ internal static class HarmonyPatches
         ChatUI.ChatClosed();
     }
     
-    [HarmonyPatch(typeof(MessageUI), nameof(MessageUI.SetFixedBoxSize))]
-    [HarmonyPostfix]
-    private static void SetFixedBoxSizePostfix()
-    {
-        ChatUI.ForcePanelSize();
-    }
-    
-    [HarmonyPatch(typeof(MessageUI), nameof(MessageUI.SetDynamicBoxSize))]
-    [HarmonyPostfix]
-    private static void SetDynamicBoxSizePostfix()
-    {
-        ChatUI.ForcePanelSize();
-    }
-    
     [HarmonyPatch(typeof(AircraftSelectionMenu), nameof(AircraftSelectionMenu.OnEnable))]
     [HarmonyPostfix]
     private static void AircraftSelectionMenuOnEnablePostfix()
@@ -239,8 +225,5 @@ internal static class HarmonyPatches
     
     [HarmonyPatch(typeof(MessageUI), nameof(MessageUI.CheckChatBox))]
     [HarmonyPrefix]
-    private static bool MessageUICheckChatBoxPrefix()
-    {
-        return !ChatUI.CheckOpenChat();
-    }
+    private static bool MessageUICheckChatBoxPrefix() => !ChatUI.CheckOpenChat();
 }
